@@ -1,64 +1,92 @@
 # Node.js MCP Server
 
-A professional Model Context Protocol (MCP) server built with Node.js, TypeScript, and the official `@modelcontextprotocol/sdk`.
+A specialized MCP server focused on **3 Core Jobs** for agentic workflows.
 
-## Features
+## The 3 Jobs
 
-- **Tools**:
-  - `calculate`: Perform basic arithmetic operations (add, subtract, multiply, divide).
-  - `get_system_info`: Retrieve system information (Platform, CPU, Memory).
-- **Resources**:
-  - `system://info`: A text resource containing basic system details.
+### 1. Context Management & Learning
+The agent can manage the project's documentation and "learn" the entire context.
 
-## Installation
+-   **Tool**: `md`
+-   **Actions**:
+    -   `read_all`: Reads `README.md` from the specified path.
+    -   `update_all`: Overwrites/updates `README.md` with new content provided by the client.
+    -   **Arguments**: 
+        - `path` (string, optional) - Absolute path to project root.
+        - `content` (string, required for `update_all`) - The new content for `README.md`.
 
-1.  **Install dependencies**:
-    ```bash
-    npm install
-    ```
+### 2. Test Management
+The agent can maintain a test playground and report results.
 
-2.  **Build the project**:
-    ```bash
-    npm run build
-    ```
+-   **Tool**: `test`
+-   **Actions**:
+    -   `create_update_playground`: Writes code to `test_playground.js`, runs it, and reports results in `test.md`.
+    -   **Arguments**:
+        - `path` (string, optional) - Absolute path to project root.
+        - `code` (string, required) - The test code to execute.
 
-## Usage
+### 3. Build & Run
 
-### Running the Server
+-   **Tool**: `deploy`
+-   **Actions**:
+    -   `dev`: Runs the project in development mode.
+    -   `prod`: Builds the project and runs it.
+    -   **Arguments**:
+        - `path` (string, optional) - Absolute path to project root.
 
-This server communicates via `stdio`. You can run it directly:
+## Installation & Usage
 
+### 1. Build the Server
 ```bash
-node dist/index.js
+cd /home/mc/Desktop/mcpserver
+npm install
+npm run build
 ```
 
-### Integration with Claude Desktop (or other MCP Clients)
+### 2. Configuration (Claude / Antigravity)
 
-To use this server with Claude Desktop, add the following configuration to your `claude_desktop_config.json`:
+Add to your MCP configuration file:
+
+**Location**: `~/.config/Claude/claude_desktop_config.json` (Linux)
 
 ```json
 {
   "mcpServers": {
-    "my-node-server": {
+    "job-server": {
       "command": "node",
-      "args": ["/absolute/path/to/mcpserver/dist/index.js"]
+      "args": ["/home/mc/Desktop/mcpserver/dist/index.js"]
     }
   }
 }
 ```
 
-*Note: Replace `/absolute/path/to/mcpserver` with the actual path to this directory.*
+### 3. Usage Examples
 
-## Development
+#### Read Documentation
+```json
+{
+  "name": "md",
+  "arguments": {
+    "action": "read_all",
+    "path": "/home/mc/Desktop/ServiceApp"
+  }
+}
+```
 
-- **Run in development mode** (restarts on change):
-  ```bash
-  npm run build -- --watch
-  # In another terminal:
-  node dist/index.js
-  ```
+#### Update Documentation
+The Client (AI Agent) is responsible for generating the new content.
+```json
+{
+  "name": "md",
+  "arguments": {
+    "action": "update_all",
+    "path": "/home/mc/Desktop/ServiceApp",
+    "content": "# New Project Documentation\n\nUpdated based on recent changes..."
+  }
+}
+```
 
-- **Run Tests**:
-  ```bash
-  npm test
-  ```
+## Troubleshooting
+
+- **Path Issues**: Always provide the `path` argument to ensure files are read from/written to the correct location.
+- **Content Required**: The `update_all` action requires the `content` argument.

@@ -1,20 +1,27 @@
 {
-  "name": "mcpserver",
-  "version": "1.0.0",
-  "description": "[Title]: MCPServer - Message Communication Protocol Server",
-  "type": "module",
-  "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "test": "vitest"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.25.2",
-    "zod": "^4.3.5"
-  },
-  "devDependencies": {
-    "@types/node": "^25.0.6",
-    "typescript": "^5.9.3",
-    "vitest": "^2.1.8"
-  }
+    "name": "mcp-job-server",
+    "version": "1.0.1",
+    "description": "A specialized MCP server focused on 3 Core Jobs for agentic workflows",
+    "type": "module",
+    "main": "dist/index.js",
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsc && node dist/index.js",
+        "test": "node test_playground.js"
+    },
+    "keywords": [
+        "mcp",
+        "server",
+        "agent",
+        "workflow"
+    ],
+    "author": "",
+    "license": "MIT",
+    "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.0.4"
+    },
+    "devDependencies": {
+        "@types/node": "^22.10.5",
+        "typescript": "^5.7.3"
+    }
 }
