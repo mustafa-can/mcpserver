@@ -16,14 +16,18 @@ The agent can manage the project's documentation and "learn" the entire context.
         - `content` (string, required for `update_all`) - The new content for `README.md`.
 
 ### 2. Test Management
-The agent can maintain a test playground and report results.
+The agent can manage the project's tests in a unified workflow.
 
 -   **Tool**: `test`
--   **Actions**:
-    -   `create_update_playground`: Writes code to `test_playground.js`, runs it, and reports results in `test.md`.
-    -   **Arguments**:
-        - `path` (string, optional) - Absolute path to project root.
-        - `code` (string, required) - The test code to execute.
+-   **Action**: `test`
+-   **Functionality**:
+    1.  Writes the provided test `code` to `test_path`.
+    2.  Runs the project's test suite (`npm test`).
+    3.  Reports output and errors to `test.md`.
+-   **Arguments**:
+    -   `path` (string, optional) - Absolute path to project root.
+    -   `test_path` (string, required) - Relative path to the test file (e.g., `tests/api.test.js`).
+    -   `code` (string, required) - Content of the test file.
 
 ### 3. Build & Run
 
@@ -32,7 +36,7 @@ The agent can maintain a test playground and report results.
     -   `dev`: Runs the project in development mode.
     -   `prod`: Builds the project and runs it.
     -   **Arguments**:
-        - `path` (string, optional) - Absolute path to project root.
+        -   `path` (string, optional) - Absolute path to project root.
 
 ## Installation & Usage
 
@@ -60,33 +64,40 @@ Add to your MCP configuration file:
 }
 ```
 
+```mcp_config.json
+{
+  "mcpServers": {
+    "my-job-server": {
+      "command": "node",
+      "args": ["/home/mc/Desktop/mcpserver/dist/index.js"]
+    }
+  }
+}
+```
+
 ### 3. Usage Examples
 
-#### Read Documentation
+#### Manage Tests
+To create a test, update it, or simply run existing tests (by re-submitting the code), use the `test` tool.
+
 ```json
 {
-  "name": "md",
+  "name": "test",
   "arguments": {
-    "action": "read_all",
-    "path": "/home/mc/Desktop/ServiceApp"
+    "action": "test",
+    "path": "/home/mc/Desktop/ServiceApp",
+    "test_path": "tests/login.test.js",
+    "code": "describe('Login', () => { ... });"
   }
 }
 ```
 
-#### Update Documentation
-The Client (AI Agent) is responsible for generating the new content.
-```json
-{
-  "name": "md",
-  "arguments": {
-    "action": "update_all",
-    "path": "/home/mc/Desktop/ServiceApp",
-    "content": "# New Project Documentation\n\nUpdated based on recent changes..."
-  }
-}
-```
+The server will:
+1.  Save `tests/login.test.js`.
+2.  Run `npm test`.
+3.  Report full results to `test.md`.
 
 ## Troubleshooting
 
-- **Path Issues**: Always provide the `path` argument to ensure files are read from/written to the correct location.
-- **Content Required**: The `update_all` action requires the `content` argument.
+- **Path Issues**: Always provide the `path` argument.
+- **npm test**: The `test` action requires a valid `test` script in the project's `package.json`.

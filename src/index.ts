@@ -54,7 +54,6 @@ async function readAllDocs(projectRoot: string): Promise<string> {
     }
 }
 
-
 async function updateAllDocs(projectRoot: string, content: string): Promise<string> {
     if (!content) {
         throw new Error("Content argument is required for update_all");
@@ -70,97 +69,63 @@ async function updateAllDocs(projectRoot: string, content: string): Promise<stri
     }
 }
 
-// Helper functions (restored)
-async function analyzeProjectStructure(projectRoot: string): Promise<any> {
-    const structure: any = {
-        name: path.basename(projectRoot),
-        files: [],
-        directories: [],
-    };
-
-    try {
-        const items = await fs.readdir(projectRoot, { withFileTypes: true });
-
-        for (const item of items) {
-            if (item.name.startsWith(".") || item.name === "node_modules" || item.name === "dist") {
-                continue;
-            }
-
-            if (item.isDirectory()) {
-                structure.directories.push(item.name);
-            } else {
-                structure.files.push(item.name);
-            }
-        }
-    } catch (error) {
-        // Ignore errors
-    }
-
-    return structure;
-}
-
-function generateReadme(structure: any): string {
-    return `# ${structure.name}
-
-## Overview
-This project was automatically initialized.
-
-## Project Structure
-- Files: ${structure.files.join(", ") || "None"}
-- Directories: ${structure.directories.join(", ") || "None"}
-
-## Installation
-\`\`\`bash
-npm install
-\`\`\`
-
-## Usage
-Please update this section with usage instructions.
-`;
-}
-
 // Test Management Tools
-async function createUpdatePlayground(
+async function handleTestExecution(
     projectRoot: string,
+    testPath: string,
     code: string
 ): Promise<string> {
-    const playgroundPath = path.join(projectRoot, "test_playground.js");
-    const testMdPath = path.join(projectRoot, "test.md");
-
-    // Write the code to test_playground.js
-    await fs.writeFile(playgroundPath, code);
-
-    // Run the code and capture results
-    let result = "";
     try {
-        const { stdout, stderr } = await execAsync(`node ${playgroundPath}`, {
-            cwd: projectRoot,
-            timeout: 30000,
-        });
+        const fullTestPath = path.join(projectRoot, testPath);
+        const testMdPath = path.join(projectRoot, "test.md");
 
-        result = `# Test Results\n\n## Execution: SUCCESS\n\n### Output\n\`\`\`\n${stdout}\`\`\`\n`;
+        // 1. Write/Update the test file
+        // Ensure directory exists
+        const dir = path.dirname(fullTestPath);
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(fullTestPath, code);
 
-        if (stderr) {
-            result += `\n### Warnings/Errors\n\`\`\`\n${stderr}\`\`\`\n`;
+        // 2. Run the tests (npm test)
+        const packageJsonPath = path.join(projectRoot, "package.json");
+        const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf-8"));
+
+        if (!packageJson.scripts?.test) {
+            throw new Error("No 'test' script found in package.json");
         }
+
+        let runOutput = "";
+        let runError = "";
+
+        try {
+            const { stdout, stderr } = await execAsync("npm test", {
+                cwd: projectRoot,
+                timeout: 60000,
+            });
+            runOutput = stdout;
+            runError = stderr;
+        } catch (error: any) {
+            runOutput = error.stdout || "";
+            runError = error.message + "\n" + (error.stderr || "");
+        }
+
+        // 3. Report detailed results to test.md
+        let report = `# Test Report\n\n`;
+        report += `**Test File**: \`${testPath}\`\n`;
+        report += `**Execution Time**: ${new Date().toISOString()}\n\n`;
+
+        report += `## Output\n\`\`\`\n${runOutput}\`\`\`\n\n`;
+
+        if (runError) {
+            report += `## Errors/Warnings\n\`\`\`\n${runError}\`\`\`\n`;
+        }
+
+        await fs.writeFile(testMdPath, report);
+
+        return `✓ Updated test file: ${testPath}\n✓ Ran 'npm test'\n✓ Reported results to: test.md`;
+
     } catch (error: any) {
-        result = `# Test Results\n\n## Execution: FAILED\n\n### Error\n\`\`\`\n${error.message}\`\`\`\n`;
-
-        if (error.stdout) {
-            result += `\n### Stdout\n\`\`\`\n${error.stdout}\`\`\`\n`;
-        }
-
-        if (error.stderr) {
-            result += `\n### Stderr\n\`\`\`\n${error.stderr}\`\`\`\n`;
-        }
+        throw new Error(`Test execution failed: ${error.message}`);
     }
-
-    // Write results to test.md
-    const timestamp = new Date().toISOString();
-    result += `\n\n---\n*Generated at: ${timestamp}*\n`;
-    await fs.writeFile(testMdPath, result);
-
-    return result;
 }
 
 // Build & Run Tools
@@ -240,25 +205,29 @@ const tools: Tool[] = [
     },
     {
         name: "test",
-        description: "Test Management - Create/update test playground and report results",
+        description: "Test Management - Write test code, run tests, and report results.",
         inputSchema: {
             type: "object",
             properties: {
                 action: {
                     type: "string",
-                    enum: ["create_update_playground"],
-                    description: "Create/update test_playground.js and run it",
-                },
-                code: {
-                    type: "string",
-                    description: "JavaScript code to write to test_playground.js",
+                    enum: ["test"],
+                    description: "Action to perform: test (Unified action)",
                 },
                 path: {
                     type: "string",
-                    description: "Absolute path to the project root. Defaults to current directory.",
+                    description: "Absolute path to the project root.",
+                },
+                test_path: {
+                    type: "string",
+                    description: "Relative path to the test file (e.g., tests/my.test.js)",
+                },
+                code: {
+                    type: "string",
+                    description: "Content of the test file",
                 },
             },
-            required: ["action", "code"],
+            required: ["action", "test_path", "code"],
         },
     },
     {
@@ -338,14 +307,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
 
             case "test": {
                 const action = args?.action as string;
-                const code = args?.code as string;
 
-                if (action === "create_update_playground") {
-                    if (!code) {
-                        throw new Error("Code parameter is required");
+                if (action === "test") {
+                    const testPath = args?.test_path as string;
+                    const code = args?.code as string;
+
+                    if (!testPath || !code) {
+                        throw new Error("test_path and code parameters are required for test action");
                     }
 
-                    const result = await createUpdatePlayground(projectRoot, code);
+                    const result = await handleTestExecution(projectRoot, testPath, code);
                     return {
                         content: [{ type: "text", text: result }],
                     };
