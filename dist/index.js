@@ -4,7 +4,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 // @ts-ignore
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 // @ts-ignore
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, ListToolsRequestSchema, ListPromptsRequestSchema, GetPromptRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { exec } from "child_process";
@@ -62,7 +62,7 @@ async function updateAllDocs(projectRoot, content) {
     }
 }
 // Test Management Tools
-async function handleTestExecution(projectRoot, testPath, code) {
+async function handleTestExecution(projectRoot, testPath, code, scriptName = "test", baseUrl) {
     try {
         const fullTestPath = path.join(projectRoot, testPath);
         const testMdPath = path.join(projectRoot, "test.md");
@@ -71,18 +71,24 @@ async function handleTestExecution(projectRoot, testPath, code) {
         const dir = path.dirname(fullTestPath);
         await fs.mkdir(dir, { recursive: true });
         await fs.writeFile(fullTestPath, code);
-        // 2. Run the tests (npm test)
+        // 2. Run the tests
         const packageJsonPath = path.join(projectRoot, "package.json");
         const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf-8"));
-        if (!packageJson.scripts?.test) {
-            throw new Error("No 'test' script found in package.json");
+        if (!packageJson.scripts?.[scriptName]) {
+            throw new Error(`No '${scriptName}' script found in package.json`);
         }
         let runOutput = "";
         let runError = "";
+        // Prepare environment variables
+        const env = { ...process.env };
+        if (baseUrl) {
+            env.TEST_BASE_URL = baseUrl;
+        }
         try {
-            const { stdout, stderr } = await execAsync("npm test", {
+            const { stdout, stderr } = await execAsync(`npm run ${scriptName}`, {
                 cwd: projectRoot,
                 timeout: 60000,
+                env, // Pass the environment with potential TEST_BASE_URL
             });
             runOutput = stdout;
             runError = stderr;
@@ -197,6 +203,14 @@ const tools = [
                     type: "string",
                     description: "Content of the test file",
                 },
+                script: {
+                    type: "string",
+                    description: "NPM script to run (e.g. 'test', 'e2e'). Defaults to 'test'.",
+                },
+                baseUrl: {
+                    type: "string",
+                    description: "Base URL of the application to test (e.g. 'http://localhost:3000'). Passed to tests as TEST_BASE_URL env var.",
+                },
             },
             required: ["action", "test_path", "code"],
         },
@@ -221,6 +235,17 @@ const tools = [
         },
     },
 ];
+// Define Prompts
+const prompts = [
+    {
+        name: "test/create",
+        description: "Create a playground test of all pages, functionalities for backend and front end",
+    },
+    {
+        name: "test/run",
+        description: "Run the test you created, or create it if missing, and report results to test.md",
+    }
+];
 // Create and configure the server
 const server = new Server({
     name: "mcp-job-server",
@@ -228,7 +253,72 @@ const server = new Server({
 }, {
     capabilities: {
         tools: {},
+        prompts: {},
     },
+});
+// Handle prompt listing
+server.setRequestHandler(ListPromptsRequestSchema, async () => {
+    return { prompts };
+});
+// Handle prompt retrieval
+server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const { name } = request.params;
+    if (name === "test/create") {
+        return {
+            description: "Create a playground test of all pages, functionalities for backend and front end",
+            messages: [
+                {
+                    role: "user",
+                    content: {
+                        type: "text",
+                        text: `ACT AS A SENIOR QA ENGINEER. Your goal is to write a "test_playground.js" file that performs an EXHAUSTIVE TEAR-DOWN of this project.
+
+1.  **SCOPE**:
+    *   **Frontend**: You must test EVERY page, EVERY component, EVERY interactive element. Use simulated DOM interactions (like jsdom/cheerio concepts or fetch requests for HTML) to verify specific <div> content, ensure buttons exist, and check forms.
+    *   **Backend**: Test EVERY API endpoint, EVERY service function.
+    *   **Granularity**: Do not vaguely check "is it working?". Check specific IDs, classes, and text content.
+
+2.  **ENVIRONMENT**:
+    *   The code MUST use \`process.env.TEST_BASE_URL\` as the target.
+    *   It must handle being run against a LIVE DEPLOYMENT or localhost.
+
+3.  **STRICTNESS**:
+    *   If a button is missing, it's a FAIL.
+    *   If a text typo exists, it's a FAIL.
+    *   Write the test code to be ruthless.`
+                    }
+                }
+            ]
+        };
+    }
+    else if (name === "test/run") {
+        return {
+            description: "Run the test you created, or create it if missing, and report results to test.md",
+            messages: [
+                {
+                    role: "user",
+                    content: {
+                        type: "text",
+                        text: `Run the comprehensive "test_playground.js" file.
+
+1.  **EXECUTION**:
+    *   Check if the user provided a URL (e.g. "https://myapp.com"). If yes, PASS IT as the \`baseUrl\` argument to the 'test' tool.
+    *   Run the test using the 'test' tool.
+
+2.  **REPORTING ("The Judge")**:
+    *   After running, you must write the results to "test.md".
+    *   **DO NOT** just paste logs.
+    *   **YOU MUST WRITE A PERSONAL REPORT TO THE DEVELOPER**:
+        *   Use the headers: "## WHAT YOU DID WELL" and "## WHAT YOU DID WRONG".
+        *   For bugs/failures, say: "You did wrong here: [explanation of the button/div/function that failed]".
+        *   For successes, say: "You did well: [specific feature works perfectly]".
+    *   Be direct. The developer needs to know exactly what is broken.`
+                    }
+                }
+            ]
+        };
+    }
+    throw new Error(`Prompt not found: ${name}`);
 });
 // Handle tool listing
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -271,10 +361,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 if (action === "test") {
                     const testPath = args?.test_path;
                     const code = args?.code;
+                    const script = args?.script; // Optional script name
+                    const baseUrl = args?.baseUrl; // Optional base URL
                     if (!testPath || !code) {
                         throw new Error("test_path and code parameters are required for test action");
                     }
-                    const result = await handleTestExecution(projectRoot, testPath, code);
+                    const result = await handleTestExecution(projectRoot, testPath, code, script, baseUrl);
                     return {
                         content: [{ type: "text", text: result }],
                     };
