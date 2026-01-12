@@ -187,6 +187,137 @@ async function runProd(projectRoot: string): Promise<string> {
     }
 }
 
+// Test Management Tool Logic
+async function detectProjectStack(projectRoot: string): Promise<{
+    language: string;
+    testTool: string;
+    runCommand: string;
+}> {
+    try {
+        const files = await fs.readdir(projectRoot);
+
+        if (files.includes("go.mod")) {
+            return {
+                language: "Go",
+                testTool: "Go Test",
+                runCommand: "go test ./...",
+            };
+        }
+        if (files.includes("composer.json")) {
+            return {
+                language: "Laravel/PHP",
+                testTool: "Pest or PHPUnit",
+                runCommand: "php artisan test",
+            };
+        }
+        if (files.includes("requirements.txt") || files.includes("pyproject.toml")) {
+            return {
+                language: "Python",
+                testTool: "Pytest",
+                runCommand: "pytest",
+            };
+        }
+        if (files.includes("package.json")) {
+            return {
+                language: "Node.js",
+                testTool: "Playwright (for Web) or Jest/Mocha (for Backend)",
+                runCommand: "npm test",
+            };
+        }
+
+        return {
+            language: "Unknown",
+            testTool: "appropriate testing framework",
+            runCommand: "echo 'Unknown project type'",
+        };
+    } catch (error) {
+        return {
+            language: "Error",
+            testTool: "unknown",
+            runCommand: "",
+        };
+    }
+}
+
+async function handleTestManagement(projectRoot: string, action: string): Promise<string> {
+    const stack = await detectProjectStack(projectRoot);
+
+    if (action === "create") {
+        return `I have analyzed the project at ${projectRoot}. You must now create a comprehensive 'End-to-End' and 'Unit' test suite using ${stack.testTool}.
+     
+     **STRICT QA MANDATE - YOU MUST COVER:**
+     1. **Full Scope Analysis:** Traverse \`src/\` or \`app/\` folders. You must generate tests for **EVERY** single page, route, and API endpoint found.
+     2. **Frontend Quality (User Experience):**
+        - **Visuals:** Test CSS media queries and responsiveness (mobile vs desktop views).
+        - **Interactions:** verify all buttons, forms, and modals work.
+        - **Navigation:** crawl EVERY link <a> tag to ensure no 404s/broken targets.
+     3. **Backend Logic:** Test all data flows, authentication states, and database edge cases.
+     4. **End-User Simulation:** Create flows acting as a real user (e.g., 'User signs up, gets email, logs in, buys item').
+     
+     **DO NOT** write a simple 'smoke test'. Write a production-grade test suite that validates the entire application functionality.`;
+    }
+
+    if (action === "run") {
+        let testsFound = false;
+
+        // Check for tests based on stack
+        if (stack.language === "Node.js") {
+            const pkgPath = path.join(projectRoot, "package.json");
+            try {
+                const pkg = JSON.parse(await fs.readFile(pkgPath, "utf-8"));
+                if (pkg.scripts?.test) testsFound = true;
+                // Also check for Playwright/Test folders if script is missing but tests exist
+                const subFiles = await fs.readdir(projectRoot);
+                if (subFiles.some(f => f.includes('playwright') || f.includes('test') || f.includes('spec'))) testsFound = true;
+            } catch { }
+        } else if (stack.language === "Go") {
+            try {
+                const { stdout } = await execAsync("find . -name '*_test.go' | head -n 1", { cwd: projectRoot });
+                if (stdout.trim()) testsFound = true;
+            } catch { }
+        } else if (stack.language === "Python") {
+            try {
+                const { stdout } = await execAsync("find . -name 'test_*.py' -o -name '*_test.py' -o -type d -name 'tests' | head -n 1", { cwd: projectRoot });
+                if (stdout.trim()) testsFound = true;
+            } catch { }
+        } else if (stack.language === "Laravel/PHP") {
+            try {
+                const stats = await fs.stat(path.join(projectRoot, "tests"));
+                if (stats.isDirectory()) testsFound = true;
+            } catch { }
+        }
+
+        if (!testsFound && stack.language !== "Unknown") {
+            return "CRITICAL: No tests found. You failed to follow the QA Mandate. Trigger action 'create' immediately.";
+        }
+
+        // Execute tests
+        const testMdPath = path.join(projectRoot, "test.md");
+        let runOutput = "";
+        let runError = "";
+
+        try {
+            const { stdout, stderr } = await execAsync(stack.runCommand, {
+                cwd: projectRoot,
+                timeout: 300000, // 5 minutes timeout for full suite
+                maxBuffer: 10 * 1024 * 1024 // 10MB buffer
+            });
+            runOutput = stdout;
+            runError = stderr;
+        } catch (error: any) {
+            runOutput = error.stdout || "";
+            runError = (error.stderr || "") + "\n" + error.message;
+        }
+
+        const report = `Tests executed. Full breakdown of passed/failed scenarios written to test.md.\n\nSTDOUT:\n${runOutput}\n\nSTDERR:\n${runError}`;
+        await fs.writeFile(testMdPath, report);
+
+        return "Tests executed. Full breakdown of passed/failed scenarios written to test.md.";
+    }
+
+    throw new Error(`Unknown test_management action: ${action}`);
+}
+
 // Define MCP Tools
 const tools: Tool[] = [
     {
@@ -264,6 +395,25 @@ const tools: Tool[] = [
                 },
             },
             required: ["action"],
+        },
+    },
+    {
+        name: "test_management",
+        description: "Quality Assurance Manager - Guide AI on testing or run tests.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                action: {
+                    type: "string",
+                    enum: ["create", "run"],
+                    description: "Action: 'create' (get instructions) or 'run' (execute tests)",
+                },
+                path: {
+                    type: "string",
+                    description: "Absolute path to the project root.",
+                },
+            },
+            required: ["action", "path"],
         },
     },
 ];
@@ -440,6 +590,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
                 }
 
                 throw new Error(`Unknown action: ${action}`);
+            }
+
+            case "test_management": {
+                const action = args?.action as string;
+                if (!args?.path) {
+                    throw new Error("Path argument is required for test_management");
+                }
+                const result = await handleTestManagement(args.path, action);
+                return {
+                    content: [{ type: "text", text: result }],
+                };
             }
 
             default:
